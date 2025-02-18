@@ -1,0 +1,168 @@
+let 
+    //////////////////////////////////////////////////////////////////////////
+    // 1) Import du CSV
+    //////////////////////////////////////////////////////////////////////////
+    Source = Csv.Document(
+        File.Contents("C:\Users\LEA3DY\Desktop\Import PPS\tbbhnr (1).csv"), 
+        [Delimiter=";", Columns=68, Encoding=1252, QuoteStyle=QuoteStyle.None]
+    ),
+
+    //////////////////////////////////////////////////////////////////////////
+    // 2) Utiliser la première ligne pour les en-têtes
+    //////////////////////////////////////////////////////////////////////////
+    PromoteHeaders = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),
+
+    //////////////////////////////////////////////////////////////////////////
+    // 3) Ne conserver que les colonnes utiles
+    //////////////////////////////////////////////////////////////////////////
+    KeepOnlyNeeded = Table.SelectColumns(
+        PromoteHeaders,
+        {
+            "SACHNR",
+            "LAGORT",
+            "LETYP",
+            "ISTMENGE",
+            "ADRESSE"
+        }
+    ),
+
+    //////////////////////////////////////////////////////////////////////////
+    // 4) Convertir le type de ces colonnes
+    //////////////////////////////////////////////////////////////////////////
+    TypeChanged = Table.TransformColumnTypes(
+        KeepOnlyNeeded,
+        {
+            {"SACHNR", type text},
+            {"LAGORT", type text},
+            {"LETYP", type text},
+            {"ISTMENGE", Int64.Type},
+            {"ADRESSE", type text}
+        }
+    ),
+
+    //////////////////////////////////////////////////////////////////////////
+    // 5) Ajouter la colonne ADRESSE.1 (4 premiers caractères)
+    //////////////////////////////////////////////////////////////////////////
+    AddAdresse1 = Table.AddColumn(
+        TypeChanged,
+        "ADRESSE.1",
+        each if Text.Length([ADRESSE]) >= 4
+             then Text.Start([ADRESSE], 4)
+             else [ADRESSE],
+        type text
+    ),
+
+    //////////////////////////////////////////////////////////////////////////
+    // 6) Ajouter la colonne ADRESSE.2 (2 caractères suivants, si possible)
+    //////////////////////////////////////////////////////////////////////////
+    AddAdresse2 = Table.AddColumn(
+        AddAdresse1,
+        "ADRESSE.2",
+        each if Text.Length([ADRESSE]) >= 6
+             then Text.Range([ADRESSE], 4, 2)
+             else null,
+        type text
+    ),
+
+    //////////////////////////////////////////////////////////////////////////
+    // 7) Ajouter un zéro devant ADRESSE.2 (sans autre vérification)
+    //////////////////////////////////////////////////////////////////////////
+    AddLeadingZero = Table.TransformColumns(
+        AddAdresse2,
+        {
+            {
+                "ADRESSE.2", 
+                each "0" & _ ,  // Concatène "0" à la valeur
+                type text
+            }
+        }
+    ),
+
+    //////////////////////////////////////////////////////////////////////////
+    // 8) Supprimer la colonne ADRESSE d'origine
+    //////////////////////////////////////////////////////////////////////////
+    RemoveOldAdresse = Table.RemoveColumns(AddLeadingZero, {"ADRESSE"}),
+
+    //////////////////////////////////////////////////////////////////////////
+    // 9) Ajouter la colonne X avec la valeur 0
+    //////////////////////////////////////////////////////////////////////////
+    AddX = Table.AddColumn(
+        RemoveOldAdresse,
+        "X",
+        each 0,
+        Int64.Type
+    ),
+
+    //////////////////////////////////////////////////////////////////////////
+    // 10) Ajouter la colonne Y avec la valeur 0
+    //////////////////////////////////////////////////////////////////////////
+    AddY = Table.AddColumn(
+        AddX,
+        "Y",
+        each 0,
+        Int64.Type
+    ),
+
+    //////////////////////////////////////////////////////////////////////////
+    // 11) Remplacer les LETYP vides par "EPAL"
+    //////////////////////////////////////////////////////////////////////////
+    ReplaceEmpty = Table.ReplaceValue(
+        AddY,
+        "",
+        "EPAL",
+        Replacer.ReplaceValue,
+        {"LETYP"}
+    ),
+
+    //////////////////////////////////////////////////////////////////////////
+    // 12) Appliquer vos filtres 
+    //     (attention, vous utilisez ADRESSE.1 pour filtrer, donc on la garde encore)
+    //////////////////////////////////////////////////////////////////////////
+    Filter1 = Table.SelectRows(ReplaceEmpty, each [LAGORT] <> "istmenge"),
+    Filter2 = Table.SelectRows(Filter1, each not Text.StartsWith([ADRESSE.1], "G")),
+    Filter3 = Table.SelectRows(Filter2, each ([LAGORT] = "AK" or [LAGORT] = "PAL")),
+
+    //////////////////////////////////////////////////////////////////////////
+    // 13) Réordonner les colonnes (ISTMENGE en dernière colonne)
+    //     Ici, on inclut encore ADRESSE.1 s'il faut l'afficher maintenant,
+    //     mais on va la supprimer juste après.
+    //////////////////////////////////////////////////////////////////////////
+    ReorderColumns = Table.ReorderColumns(
+        Filter3,
+        {
+            "SACHNR",
+            "LAGORT",
+            "LETYP",
+            "ADRESSE.1",
+            "ADRESSE.2",
+            "X",
+            "Y",
+            "ISTMENGE"
+        }
+    ),
+
+    //////////////////////////////////////////////////////////////////////////
+    // 14) Supprimer la colonne ADRESSE.1 (désormais inutile)
+    //////////////////////////////////////////////////////////////////////////
+    RemoveAdresse1 = Table.RemoveColumns(ReorderColumns, {"ADRESSE.1"}),
+
+    //////////////////////////////////////////////////////////////////////////
+    // 15) Filtrer à nouveau : ne garder que LAGORT = "AK"
+    //////////////////////////////////////////////////////////////////////////
+    #"Lignes filtrées" = Table.SelectRows(RemoveAdresse1, each ([LAGORT] = "AK")),
+
+    //////////////////////////////////////////////////////////////////////////
+    // 16) Remplacer "AK" par "AKL"
+    //////////////////////////////////////////////////////////////////////////
+    #"Valeur remplacée" = Table.ReplaceValue(
+        #"Lignes filtrées",
+        "AK",
+        "AKL",
+        Replacer.ReplaceText,
+        {"LAGORT"}
+    )
+in
+    //////////////////////////////////////////////////////////////////////////
+    // 17) Retour du résultat final
+    //////////////////////////////////////////////////////////////////////////
+    #"Valeur remplacée"
